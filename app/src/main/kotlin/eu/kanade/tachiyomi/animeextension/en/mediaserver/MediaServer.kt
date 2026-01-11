@@ -37,50 +37,66 @@ class MediaServer : AnimeHttpSource() {
 
     private val json: Json by injectLazy()
 
+    // Title normalization regex
+    private val seriesRegex = Regex("(.+)\\s+S(\\d+)E(\\d+).*", RegexOption.IGNORE_CASE)
+
     override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/index.php/categories/movies/?orderby=views&order=DESC&paged=$page")
+        val path = if (page == 1) "" else "page/$page/"
+        return GET("$baseUrl/index.php/categories/movies/$path?orderby=views&order=DESC")
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val elements = document.select("div.post-item")
-        val animeList = elements.map { element ->
-            SAnime.create().apply {
-                val aTag = element.selectFirst("a.post-permalink") ?: element.selectFirst("a")!!
-                setUrlWithoutDomain(aTag.attr("href"))
-                title = aTag.attr("title").ifEmpty { aTag.text() }
+        
+        val seenTitles = mutableSetOf<String>()
+        val animeList = mutableListOf<SAnime>()
+
+        elements.forEach { element ->
+            val aTag = element.selectFirst("a.post-permalink") ?: element.selectFirst("a") ?: return@forEach
+            val rawTitle = aTag.attr("title").ifEmpty { aTag.text() }.trim()
+            
+            // Series Grouping
+            val match = seriesRegex.find(rawTitle)
+            val displayTitle = if (match != null) match.groupValues[1].trim() else rawTitle
+            
+            if (seenTitles.contains(displayTitle)) return@forEach
+            seenTitles.add(displayTitle)
+
+            animeList.add(SAnime.create().apply {
+                val originalPath = aTag.attr("href").removePrefix(baseUrl)
+                url = if (match != null) {
+                    "$originalPath?is_series=true&base_title=${java.net.URLEncoder.encode(displayTitle, "UTF-8")}"
+                } else {
+                    originalPath
+                }
+                title = displayTitle
                 thumbnail_url = element.selectFirst("img")?.attr("src")
-            }
+            })
         }
+        
         val hasNextPage = document.selectFirst("a.next") != null || document.selectFirst("li.next") != null
         return AnimesPage(animeList, hasNextPage)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/index.php/categories/movies/?orderby=date&order=DESC&paged=$page")
+        val path = if (page == 1) "" else "page/$page/"
+        return GET("$baseUrl/index.php/categories/movies/$path?orderby=date&order=DESC")
     }
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val url = if (query.isNotEmpty()) {
-            "$baseUrl/index.php/".toHttpUrl().newBuilder().apply {
-                addQueryParameter("s", query)
-                addQueryParameter("paged", page.toString())
-            }.build().toString()
+        return if (query.isNotEmpty()) {
+            val path = if (page == 1) "" else "page/$page/"
+            GET("$baseUrl/index.php/$path?s=$query")
         } else {
             val category = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.let {
-                val pair = categories[it.state]
-                pair.second
+                categories[it.state].second
             } ?: "categories/movies/"
-            
-            "$baseUrl/index.php/$category".toHttpUrl().newBuilder().apply {
-                addQueryParameter("paged", page.toString())
-                addQueryParameter("orderby", "date")
-                addQueryParameter("order", "DESC")
-            }.build().toString()
+            val path = if (page == 1) "" else "page/$page/"
+            GET("$baseUrl/index.php/$category$path?orderby=date&order=DESC")
         }
-        return GET(url)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -96,18 +112,45 @@ class MediaServer : AnimeHttpSource() {
         }
     }
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.asJsoup()
-        val episodes = mutableListOf<SEpisode>()
-        
-        val episode = SEpisode.create().apply {
-            name = "Full Movie"
-            episode_number = 1f
-            url = response.request.url.toString()
+    override fun episodeListRequest(anime: SAnime): Request {
+        // If it's a series, we need to search for all episodes
+        if (anime.url.contains("is_series=true")) {
+            val baseTitle = anime.url.substringAfter("base_title=").substringBefore("&")
+            return GET("$baseUrl/index.php/?s=${baseTitle}")
         }
-        episodes.add(episode)
+        return super.episodeListRequest(anime)
+    }
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val url = response.request.url.toString()
+        val document = response.asJsoup()
         
-        return episodes
+        if (url.contains("?s=")) {
+            // Parsing episodes from search results (Series)
+            val elements = document.select("div.post-item")
+            return elements.mapIndexed { index, element ->
+                val aTag = element.selectFirst("a.post-permalink") ?: element.selectFirst("a")!!
+                val epTitle = aTag.attr("title").ifEmpty { aTag.text() }.trim()
+                
+                SEpisode.create().apply {
+                    name = epTitle
+                    setUrlWithoutDomain(aTag.attr("href"))
+                    // Try to extract episode number from title (e.g. E05)
+                    val epMatch = Regex("E(\\d+)", RegexOption.IGNORE_CASE).find(epTitle)
+                    episode_number = epMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (index + 1).toFloat()
+                    date_upload = 0L 
+                }
+            }.sortedByDescending { it.episode_number }
+        } else {
+            // Single Movie
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Full Movie"
+                    episode_number = 1f
+                    setUrlWithoutDomain(url)
+                }
+            )
+        }
     }
 
     override fun videoListParse(response: Response): List<Video> {
