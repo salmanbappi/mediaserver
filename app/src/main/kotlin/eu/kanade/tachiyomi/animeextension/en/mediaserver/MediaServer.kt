@@ -23,6 +23,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import uy.kohesive.injekt.injectLazy
 import java.net.URLEncoder
+import java.net.URLDecoder
 
 class MediaServer : AnimeHttpSource() {
 
@@ -120,7 +121,7 @@ class MediaServer : AnimeHttpSource() {
 
     override fun episodeListRequest(anime: SAnime): Request {
         if (anime.url.contains("is_series=true")) {
-            val baseTitle = URLEncoder.decode(anime.url.substringAfter("base_title=").substringBefore("&"), "UTF-8")
+            val baseTitle = URLDecoder.decode(anime.url.substringAfter("base_title=").substringBefore("&"), "UTF-8")
             return GET("$baseUrl$subDir/index.php/?s=${URLEncoder.encode(baseTitle, "UTF-8")}")
         }
         return GET("$baseUrl${anime.url}")
