@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.mediaserver
 
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -7,7 +8,8 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import extensions.utils.asJsoup
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
@@ -36,11 +38,7 @@ class MediaServer : AnimeHttpSource() {
     private val json: Json by injectLazy()
 
     override fun popularAnimeRequest(page: Int): Request {
-        // Using "Recent" or default index as popular. 
-        // Test used "movies/english" but let's try broader if possible.
-        // The site structure seems to be WordPress StreamTube.
-        // ?orderby=views&order=DESC usually works for popular.
-        return GET("$baseUrl/index.php/?orderby=views&order=DESC&paged=$page")
+        return GET("$baseUrl/index.php/categories/movies/?orderby=views&order=DESC&paged=$page")
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -48,24 +46,41 @@ class MediaServer : AnimeHttpSource() {
         val elements = document.select("div.post-item")
         val animeList = elements.map { element ->
             SAnime.create().apply {
-                val aTag = element.selectFirst("a.post-permalink")!!
+                val aTag = element.selectFirst("a.post-permalink") ?: element.selectFirst("a")!!
                 setUrlWithoutDomain(aTag.attr("href"))
                 title = aTag.attr("title").ifEmpty { aTag.text() }
                 thumbnail_url = element.selectFirst("img")?.attr("src")
             }
         }
-        val hasNextPage = document.selectFirst("a.next") != null
+        val hasNextPage = document.selectFirst("a.next") != null || document.selectFirst("li.next") != null
         return AnimesPage(animeList, hasNextPage)
     }
 
     override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/index.php/?orderby=date&order=DESC&paged=$page")
+        return GET("$baseUrl/index.php/categories/movies/?orderby=date&order=DESC&paged=$page")
     }
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/index.php/?s=$query&paged=$page")
+        val url = if (query.isNotEmpty()) {
+            "$baseUrl/index.php/".toHttpUrl().newBuilder().apply {
+                addQueryParameter("s", query)
+                addQueryParameter("paged", page.toString())
+            }.build().toString()
+        } else {
+            val category = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.let {
+                val pair = categories[it.state]
+                pair.second
+            } ?: "categories/movies/"
+            
+            "$baseUrl/index.php/$category".toHttpUrl().newBuilder().apply {
+                addQueryParameter("paged", page.toString())
+                addQueryParameter("orderby", "date")
+                addQueryParameter("order", "DESC")
+            }.build().toString()
+        }
+        return GET(url)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -76,23 +91,19 @@ class MediaServer : AnimeHttpSource() {
             title = document.selectFirst("h1.post-title")?.text() ?: "Unknown"
             description = document.select("div.post-content").text()
             genre = document.select("div.categories a").joinToString { it.text() }
-            status = SAnime.COMPLETED // Assuming movies mostly
+            status = SAnime.COMPLETED
             thumbnail_url = document.selectFirst("div.post-thumbnail img")?.attr("src")
         }
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        // StreamTube structure: usually one "episode" per post for movies.
-        // Sometimes series have multiple.
         val document = response.asJsoup()
         val episodes = mutableListOf<SEpisode>()
         
-        // Check for playlist/series
-        // If not, it's a single video (Movie)
         val episode = SEpisode.create().apply {
             name = "Full Movie"
             episode_number = 1f
-            url = response.request.url.toString() // We use the page URL and parse video in videoListParse
+            url = response.request.url.toString()
         }
         episodes.add(episode)
         
@@ -103,7 +114,6 @@ class MediaServer : AnimeHttpSource() {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
         
-        // 1. Try extracting from video-js tag (StreamTube native)
         document.select("video-js").forEach { videoTag ->
             val settingsJson = videoTag.attr("data-settings")
             if (settingsJson.isNotEmpty()) {
@@ -112,28 +122,58 @@ class MediaServer : AnimeHttpSource() {
                     val sources = settings["sources"]?.jsonArray
                     sources?.forEach { source ->
                         val src = source.jsonObject["src"]?.jsonPrimitive?.contentOrNull
-                        val type = source.jsonObject["type"]?.jsonPrimitive?.contentOrNull
                         if (src != null) {
-                            videoList.add(Video(src, "Stream ($type)", src))
+                            videoList.add(Video(src, "Stream", src))
                         }
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                } catch (e: Exception) {}
             }
         }
         
-        // 2. Try iframe embed
         if (videoList.isEmpty()) {
             document.select("iframe").forEach { iframe ->
                 val src = iframe.attr("src")
                 if (src.contains("embed")) {
-                     // If it's an internal embed, we might need to recurse or it's just a wrapper.
-                     // For now, let's treat it as a potential source if it looks like a file.
+                    // Possible internal player
                 }
             }
         }
 
         return videoList
+    }
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        CategoryFilter()
+    )
+
+    private class CategoryFilter : AnimeFilter.Select<String>(
+        "Category",
+        categories.map { it.first }.toTypedArray()
+    )
+
+    companion object {
+        private val categories = listOf(
+            "Movies (All)" to "categories/movies/",
+            "English" to "categories/movies/english/",
+            "Hindi Movies" to "categories/movies/hindi-movies/",
+            "South Indian (Hindi Dub)" to "categories/movies/southindianhindi-dubbed/",
+            "Animated" to "categories/movies/animated/",
+            "Bangla Kolkata" to "categories/movies/bangla-kolkata/",
+            "Bangla BD" to "categories/movies/banglabd/",
+            "Korean" to "categories/movies/korean/",
+            "Chinese" to "categories/movies/chiness-movie/",
+            "Pakistani" to "categories/movies/pakistani/",
+            "Punjabi" to "categories/movies/punjabi/",
+            "4K" to "categories/movies/4k/",
+            "3D" to "categories/movies/3d/",
+            "Documentaries" to "categories/movies/documentaried/",
+            "TV Shows" to "categories/tv-show/",
+            "Bangla Drama" to "categories/tv-show/bangla-drama/",
+            "English Drama" to "categories/tv-show/english-drama/",
+            "Hindi Drama" to "categories/tv-show/hindi-drama/",
+            "Kids Cartoon" to "categories/kids/cartoon/",
+            "Kids Science" to "categories/kids/science/",
+            "Kids E-Book" to "categories/kids/e-book/"
+        )
     }
 }
