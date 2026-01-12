@@ -52,7 +52,7 @@ jobs:
 
       - name: Rename APK
         run: |
-          mv app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/eu.kanade.tachiyomi.animeextension.en.mediaserver-v${{ env.VERSION_NAME }}-c${{ env.VERSION_CODE }}.apk
+          mv app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/eu.kanade.tachiyomi.animeextension.all.infomedia-v${{ env.VERSION_NAME }}-c${{ env.VERSION_CODE }}.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -60,7 +60,7 @@ jobs:
           tag_name: v${{ env.VERSION_NAME }}
           name: Release v${{ env.VERSION_NAME }}
           files: |
-            app/build/outputs/apk/release/eu.kanade.tachiyomi.animeextension.en.mediaserver-v${{ env.VERSION_NAME }}-c${{ env.VERSION_CODE }}.apk
+            app/build/outputs/apk/release/eu.kanade.tachiyomi.animeextension.all.infomedia-v${{ env.VERSION_NAME }}-c${{ env.VERSION_CODE }}.apk
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -74,12 +74,11 @@ jobs:
             git clone https://${{ secrets.GH_PAT }}@github.com/salmanbappi/extensions-repo.git repo_tmp
             cp app/build/outputs/apk/release/*.apk repo_tmp/apk/
             cd repo_tmp
-            # Need to ensure generate_repo.py supports this new package or manually add it
             python3 generate_repo.py
             git add apk/*.apk index.min.json repo.json
             git config user.name "GitHub Action"
             git config user.email "action@github.com"
-            git commit -m "Update MediaServer to v${{ env.VERSION_NAME }}"
+            git commit -m "Update InfoMedia to v${{ env.VERSION_NAME }}"
             git push
           else
             echo "Secret 'GH_PAT' not found. Skipping extension repo update."
