@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.en.mediaserver
+package eu.kanade.tachiyomi.animeextension.all.infomedia
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -25,15 +25,15 @@ import uy.kohesive.injekt.injectLazy
 import java.net.URLEncoder
 import java.net.URLDecoder
 
-class MediaServer : AnimeHttpSource() {
+class InfoMedia : AnimeHttpSource() {
 
-    override val name = "MediaServer"
+    override val name = "InfoMedia"
 
     override val baseUrl = "http://103.225.94.27"
 
     private val subDir = "/mediaserver"
 
-    override val lang = "en"
+    override val lang = "all"
 
     override val supportsLatest = true
 

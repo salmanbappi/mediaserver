@@ -5,19 +5,19 @@ plugins {
 }
 
 android {
-    namespace = "eu.kanade.tachiyomi.animeextension.en.mediaserver"
+    namespace = "eu.kanade.tachiyomi.animeextension.all.infomedia"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "eu.kanade.tachiyomi.animeextension.en.mediaserver"
+        applicationId = "eu.kanade.tachiyomi.animeextension.all.infomedia"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1006
-        versionName = "14.1006"
+        versionCode = 1007
+        versionName = "14.1007"
 
         manifestPlaceholders = [
-            appName: "MediaServer",
-            extClass: ".MediaServer",
+            appName: "InfoMedia",
+            extClass: ".InfoMedia",
             nsfw: "0"
         ]
     }
